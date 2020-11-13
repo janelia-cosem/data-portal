@@ -181,9 +181,12 @@ export class Volume {
     toLayer(layerType: LayerTypes): ImageLayer | SegmentationLayer {
         const srcURL = `${this.containerType}://${this.path}`;
         let subsrcURL = undefined;
-        if ((this.subsource !== undefined) && (this.subsource !== null)) {
+        
+        if (this.subsource !== null) {
           let subsrcURL = `${this.containerType}://${this.subsource.path}`;
+          console.log(subsrcURL);
         }
+        console.log(subsrcURL);
         const inputDimensions: CoordinateSpace = {
             x: [1e-9 * this.transform.scale[this.transform.axes.indexOf('x')], "m"],
             y: [1e-9 * this.transform.scale[this.transform.axes.indexOf('y')], "m"],
@@ -215,7 +218,7 @@ export class Volume {
           layer = new ImageLayer('rendering',
                                 undefined,
                                 undefined,
-                                source,
+                                [source, subsrcURL],
                                 0.75,
                                 'additive',
                                 shader,
@@ -313,7 +316,7 @@ async function getDatasetIndex(
   datasetKey: string
 ): Promise<DatasetIndex> {
   const bucketURL = bucketNameToURL(bucket);
-  const indexFile = `${bucketURL}/${datasetKey}/index.json`;
+  const indexFile = `${bucketURL}/${datasetKey}/index.test.json`;
   return getObjectFromJSON(indexFile);
 }
 
