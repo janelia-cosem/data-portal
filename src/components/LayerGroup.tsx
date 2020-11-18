@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { Volume } from "../api/datasets";
+import { VolumeSource } from "../api/datasets";
 import { Checkbox, FormControlLabel, FormGroup } from "@material-ui/core";
 import Accordion from "@material-ui/core/Accordion";
 import Typography from "@material-ui/core/Typography";
@@ -9,7 +9,7 @@ import AccordionSummary from "@material-ui/core/AccordionSummary";
 import ExpandMoreIcon from "@material-ui/icons/ExpandMore";
 
 type LayerCheckBoxListProps = {
-  volumes: Volume[];
+  volumes: VolumeSource[];
   checkState: Map<string, boolean>;
   handleChange: any;
   contentTypeProps: any;
@@ -34,7 +34,7 @@ export default function LayerGroup({
     setExpanded(!expanded);
   };
 
-  const checkBoxList = volumes?.map((volume: Volume) => {
+  const checkBoxList = volumes?.map((volume: VolumeSource) => {
     return (
       <FormControlLabel
         control={

@@ -12,6 +12,8 @@ import {
 import { s3ls, getObjectFromJSON, bucketNameToURL } from "./datasources";
 import * as Path from "path";
 import {DatasetDescription} from "./dataset_description"
+
+const meshContainerProtocol = 'precomputed'
 const IMAGE_DTYPES = ['int8', 'uint8', 'uint16'];
 const SEGMENTATION_DTYPES = ['uint64'];
 type LayerTypes = 'image' | 'segmentation' | 'annotation' | 'mesh';
@@ -53,15 +55,18 @@ export class DatasetView {
     }
   }
 
+  export interface MeshSource {
+    path: string
+    name: string
+    datasetName: string
+    format: string
+  }
+
 interface DatasetIndex {
   name: string;
-  volumes: Volume[];
+  volumes: VolumeSource[];
+  meshes: MeshSource[]
   views: DatasetView[]
-}
-
-interface MeshSpec {
-  path: string
-  format: string
 }
 
 interface SpatialTransform {
@@ -144,7 +149,7 @@ function makeShader(shaderArgs: DisplaySettings, contentType: ContentType, dataT
 
 // A single n-dimensional array
 // this constructor syntax can be shortened but I forget how
-export class Volume {
+export class VolumeSource {
     constructor(
         public path: string,
         public name: string,
@@ -158,7 +163,6 @@ export class Volume {
         public description: string,
         public version: string,
         public tags: string[],
-        public subsource: MeshSpec | undefined 
     ) {
         this.path = path;
         this.name = name;
@@ -172,21 +176,15 @@ export class Volume {
         this.description = description;
         this.version = version;
         this.tags = tags;
-        this.subsource = subsource;
      }
 
     // todo: remove handling of spatial metadata, or at least don't pass it on to the neuroglancer
     // viewer state construction
 
-    toLayer(layerType: LayerTypes): ImageLayer | SegmentationLayer {
+    toLayer(layerType: LayerTypes, mesh: Optional[MeshSource]): ImageLayer | SegmentationLayer {
         const srcURL = `${this.containerType}://${this.path}`;
-        let subsrcURL = undefined;
-        
-        if (this.subsource !== null) {
-          let subsrcURL = `${this.containerType}://${this.subsource.path}`;
-          console.log(subsrcURL);
-        }
-        console.log(subsrcURL);
+        let meshURL = mesh ? `${meshContainerProtocol}://${mesh.path}` : undefined;
+
         const inputDimensions: CoordinateSpace = {
             x: [1e-9 * this.transform.scale[this.transform.axes.indexOf('x')], "m"],
             y: [1e-9 * this.transform.scale[this.transform.axes.indexOf('y')], "m"],
@@ -201,8 +199,8 @@ export class Volume {
             outputDimensions: outputDimensions,
             inputDimensions: inputDimensions}
         // need to update the layerdatasource object to have a transform property
-        const source: LayerDataSource = {url: srcURL,
-                                        transform: layerTransform};
+        
+        const source = meshURL? [{url: srcURL, transform: layerTransform}, meshURL] : [{url: srcURL, transform: layerTransform}];
         
         let layer = undefined;
 
@@ -218,7 +216,7 @@ export class Volume {
           layer = new ImageLayer('rendering',
                                 undefined,
                                 undefined,
-                                [source, subsrcURL],
+                                source,
                                 0.75,
                                 'additive',
                                 shader,
@@ -226,12 +224,7 @@ export class Volume {
                                 undefined);
         }
         else if (layerType === 'segmentation') {
-          if (subsrcURL !== undefined) {
-            layer = new SegmentationLayer([source, subsrcURL], 'source', true);  
-          }
-          else {
             layer = new SegmentationLayer(source, 'source', true);
-          }
         }
         
         layer.name = this.name
@@ -243,15 +236,22 @@ export class Volume {
 export class Dataset {
     public key: string;
     public space: CoordinateSpace;
-    public volumes: Map<string, Volume>;
+    public volumes: Map<string, VolumeSource>;
+    public meshes: Map<string, MeshSource>
     public description: DatasetDescription | undefined
     public thumbnailPath: string
     public views: DatasetView[]
-    constructor(key: string, space: CoordinateSpace, volumes: Map<string, Volume>, description: DatasetDescription,
-    thumbnailPath: string, views: DatasetView[]) {
+    constructor(key: string, 
+               space: CoordinateSpace, 
+               volumes: Map<string, VolumeSource>,
+               meshes: Map<string, MeshSource>, 
+               description: DatasetDescription,
+               thumbnailPath: string, 
+               views: DatasetView[]) {
         this.key = key;
         this.space = space;
         this.volumes = volumes;
+        this.meshes = meshes;
         this.description = description;
         this.thumbnailPath = thumbnailPath;
         this.views = views;
@@ -260,18 +260,16 @@ export class Dataset {
     makeNeuroglancerViewerState(view: DatasetView): string {        
         const layers = [...this.volumes.keys()].filter(a => view.volumeKeys.includes(a)).map(a => 
           {let vol = this.volumes.get(a);
-            return vol.toLayer(vol.displaySettings.defaultLayerType)});       
+            let mesh = this.meshes.get(a);
+            return vol.toLayer(vol.displaySettings.defaultLayerType, mesh)});       
         // hack to post-hoc adjust alpha if there is only 1 layer selected
         if (layers.length  === 1) {layers[0].opacity = 1.0}
         const viewerPosition = view.position;
-        let crossSectionScale = view.scale;
+        let crossSectionScale = view.scale ? view.scale : 50.0;
         const projectionOrientation = undefined;
         const crossSectionOrientation = undefined;
         const projectionScale = 65536;
-        if (crossSectionScale === undefined) {
-          crossSectionScale = 50.0;
-        }
-        // the first layer is the selected layer; consider making this a kwarg
+         // the first layer is the selected layer; consider making this a kwarg
         const selectedLayer = {'layer': layers[0].name, 'visible': true};
 
         const vState = new ViewerState(
@@ -335,7 +333,12 @@ function reifyPath(outerPath: string, innerPath: string): string {
   return absPath.toString();
 }
 
-function makeVolume(outerPath: string, volumeMeta: Volume): Volume {
+function makeMeshSource(outerPath: string, meshMeta: MeshSource): MeshSource {
+  meshMeta.path = reifyPath(outerPath, meshMeta.path);
+  return meshMeta
+}
+
+function makeVolumeSource(outerPath: string, volumeMeta: VolumeSource): VolumeSource {
   volumeMeta.path = reifyPath(outerPath, volumeMeta.path);
   // this is a shim until we add a defaultLayerType field to the volume metadata
   let ds = volumeMeta.displaySettings;
@@ -346,7 +349,7 @@ function makeVolume(outerPath: string, volumeMeta: Volume): Volume {
   // console.log([volumeMeta.name, volumeMeta.displaySettings.defaultLayerType])
   // this looks so stupid! there must be a better way to do this that doesn't enrage the 
   // linter
-  return new Volume(volumeMeta.path, 
+  return new VolumeSource(volumeMeta.path, 
                     volumeMeta.name, 
                     volumeMeta.datasetName, 
                     volumeMeta.dataType,
@@ -357,8 +360,7 @@ function makeVolume(outerPath: string, volumeMeta: Volume): Volume {
                     volumeMeta.displaySettings,
                     volumeMeta.description,
                     volumeMeta.version,
-                    volumeMeta.tags,
-                    volumeMeta.subsource)
+                    volumeMeta.tags)
 }
 
 export async function makeDatasets(bucket: string): Promise<Map<string, Dataset>> {
@@ -381,9 +383,12 @@ export async function makeDatasets(bucket: string): Promise<Map<string, Dataset>
               else views.push(vObj)
             }
             if (views.length === 0){views.push(defaultView)}
-            const volumes: Map<string, Volume> = new Map();
-            index.volumes.forEach(v => volumes.set(v.name, makeVolume(outerPath, v)));
-            datasets.set(key, new Dataset(key, outputDimensions, volumes, description, thumbnailPath, views));
+            const volumes: Map<string, VolumeSource> = new Map();
+            const meshes: Map<string, MeshSource> = new Map()
+            index.volumes.forEach(v => volumes.set(v.name, makeVolumeSource(outerPath, v)));
+            index.meshes.forEach(v => meshes.set(v.name, makeMeshSource(outerPath, v)));
+            console.log(meshes);
+            datasets.set(key, new Dataset(key, outputDimensions, volumes, meshes, description, thumbnailPath, views));
         }
         catch (error) {
             console.log(error)

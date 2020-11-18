@@ -1,6 +1,6 @@
 import { Button } from "@material-ui/core";
 import React, { useContext } from "react";
-import { Dataset, DatasetView, Volume } from "../api/datasets";
+import { Dataset, DatasetView, VolumeSource } from "../api/datasets";
 import { AppContext } from "../context/AppContext";
 import LaunchIcon from "@material-ui/icons/Launch";
 import WarningIcon from "@material-ui/icons/Warning";
@@ -21,10 +21,11 @@ export default function NeuroglancerLink({
   const [appState] = useContext(AppContext);
   const neuroglancerAddress = appState.neuroglancerAddress;
   const webGL2Enabled = appState.webGL2Enabled;
-
+  // The local view contains the layer settings given by the currently selected view, plus any changes the user had made through the layer selection
+  // checkboxes
   const local_view = { ...view };
   local_view.volumeKeys = [];
-  dataset.volumes.forEach((value: Volume, key: string) => {
+  dataset.volumes.forEach((value: VolumeSource, key: string) => {
     if (checkState.get(key)) {
       local_view.volumeKeys.push(key);
     }
